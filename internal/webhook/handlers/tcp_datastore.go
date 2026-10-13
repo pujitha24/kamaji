@@ -26,11 +26,7 @@ func (t TenantControlPlaneDataStore) OnCreate(object runtime.Object) AdmissionRe
 	return func(ctx context.Context, _ admission.Request) ([]jsonpatch.JsonPatchOperation, error) {
 		tcp := object.(*kamajiv1alpha1.TenantControlPlane) //nolint:forcetypeassert
 
-		if tcp.Spec.DataStore != "" {
-			return nil, t.check(ctx, tcp.Spec.DataStore)
-		}
-
-		return nil, t.checkDataStoreOverrides(ctx, tcp)
+		return nil, t.validate(ctx, tcp)
 	}
 }
 
@@ -42,12 +38,25 @@ func (t TenantControlPlaneDataStore) OnUpdate(object runtime.Object, _ runtime.O
 	return func(ctx context.Context, _ admission.Request) ([]jsonpatch.JsonPatchOperation, error) {
 		tcp := object.(*kamajiv1alpha1.TenantControlPlane) //nolint:forcetypeassert
 
-		if tcp.Spec.DataStore != "" {
-			return nil, t.check(ctx, tcp.Spec.DataStore)
+		// Do not block finalizer removal if a referenced DataStore is already gone.
+		if tcp.DeletionTimestamp != nil {
+			return nil, nil
 		}
 
-		return nil, nil
+		return nil, t.validate(ctx, tcp)
 	}
+}
+
+// validate checks the main DataStore, when set, and always the DataStoreOverrides:
+// the mutating webhook defaults Spec.DataStore, so overrides must not depend on it being empty.
+func (t TenantControlPlaneDataStore) validate(ctx context.Context, tcp *kamajiv1alpha1.TenantControlPlane) error {
+	if tcp.Spec.DataStore != "" {
+		if err := t.check(ctx, tcp.Spec.DataStore); err != nil {
+			return err
+		}
+	}
+
+	return t.checkDataStoreOverrides(ctx, tcp)
 }
 
 func (t TenantControlPlaneDataStore) check(ctx context.Context, dataStoreName string) error {

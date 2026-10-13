@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	kamajiv1alpha1 "github.com/clastix/kamaji/api/v1alpha1"
 )
@@ -89,6 +90,46 @@ var _ = Describe("TCP Datastore webhook", func() {
 			}}
 			err := t.checkDataStoreOverrides(ctx, tcp)
 			Expect(err).To(HaveOccurred())
+		})
+	})
+
+	Describe("validation should check DataStoreOverrides when DataStore is set", func() {
+		BeforeEach(func() {
+			tcp.Spec.DataStore = "foo"
+			tcp.Spec.DataStoreOverrides = []kamajiv1alpha1.DataStoreOverride{{
+				Resource:  "/leases",
+				DataStore: "baz",
+			}}
+		})
+
+		It("should reject nonexistent DataStoreOverrides on create", func() {
+			_, err := t.OnCreate(tcp)(ctx, admission.Request{})
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("should reject nonexistent DataStoreOverrides on update", func() {
+			_, err := t.OnUpdate(tcp, tcp)(ctx, admission.Request{})
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("should not validate on update while the TCP is being deleted", func() {
+			now := metav1.Now()
+			tcp.DeletionTimestamp = &now
+			_, err := t.OnUpdate(tcp, tcp)(ctx, admission.Request{})
+			Expect(err).ToNot(HaveOccurred())
+		})
+
+		It("should reject a nonexistent main DataStore with valid DataStoreOverrides", func() {
+			tcp.Spec.DataStore = "missing"
+			tcp.Spec.DataStoreOverrides[0].DataStore = "bar"
+			_, err := t.OnCreate(tcp)(ctx, admission.Request{})
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("should accept valid DataStoreOverrides on update", func() {
+			tcp.Spec.DataStoreOverrides[0].DataStore = "bar"
+			_, err := t.OnUpdate(tcp, tcp)(ctx, admission.Request{})
+			Expect(err).ToNot(HaveOccurred())
 		})
 	})
 })
